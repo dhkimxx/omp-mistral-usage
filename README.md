@@ -21,7 +21,7 @@ omp usage --provider mistral
 
 `omp login mistral` opens a browser sign-in with your Mistral account, so there is no API key to create or paste. The plugin reads whichever key omp already holds, including a `MISTRAL_API_KEY` console key, and stores nothing itself. Only the sign-in key has been tested against the live API.
 
-Update with `omp plugin upgrade`, remove with `omp plugin uninstall omp-mistral-usage`.
+Update with `omp plugin upgrade omp-mistral-usage`, remove with `omp plugin uninstall omp-mistral-usage`.
 
 ## What it reports
 

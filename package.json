@@ -1,0 +1,27 @@
+{
+  "name": "omp-mistral-usage",
+  "version": "0.1.0",
+  "description": "Mistral Vibe and API monthly budgets in omp usage",
+  "type": "module",
+  "license": "MIT",
+  "author": "dhkimxx",
+  "repository": { "type": "git", "url": "git+https://github.com/dhkimxx/omp-mistral-usage.git" },
+  "homepage": "https://github.com/dhkimxx/omp-mistral-usage#readme",
+  "bugs": { "url": "https://github.com/dhkimxx/omp-mistral-usage/issues" },
+  "keywords": ["omp-plugin", "oh-my-pi", "omp", "mistral", "mistral-vibe", "usage", "quota"],
+  "files": ["index.ts", "README.md", "LICENSE"],
+  "omp": { "extensions": ["./index.ts"] },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "verify": "npm run check && npm test"
+  },
+  "devDependencies": {
+    "@oh-my-pi/pi-ai": "18.22.0",
+    "@oh-my-pi/pi-coding-agent": "18.22.0",
+    "@oh-my-pi/pi-tui": "18.22.0",
+    "@types/node": "^22.19.0",
+    "bun": "1.4.4",
+    "typescript": "^5.9.3"
+  }
+}

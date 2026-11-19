@@ -27,7 +27,37 @@ omp usage --provider mistral
 
 `omp login mistral` opens a browser sign-in with your Mistral account, so there is no API key to create or paste. The plugin reads whichever key omp already holds, including a `MISTRAL_API_KEY` console key, and stores nothing itself. Only the sign-in key has been tested against the live API.
 
-Pin a release tag as above. To update, install the newer tag with `--force`. On omp 19.0.0, `omp plugin upgrade` and an untagged `github:` install kept installing the first commit even after newer ones were pushed, while a tag (or a fresh Bun cache) resolved the newest. Remove with `omp plugin uninstall omp-mistral-usage`.
+Install a release tag, as above, rather than the bare `github:` spec.
+
+## Update
+
+1. Find the newest version on the [tags page](https://github.com/dhkimxx/omp-mistral-usage/tags), or list it from a shell:
+
+   ```sh
+   git ls-remote --tags --refs https://github.com/dhkimxx/omp-mistral-usage.git
+   ```
+
+2. Install that tag over the current one. `--force` replaces the installed copy. The plugin stores no credentials, so your Mistral login is untouched:
+
+   ```sh
+   omp plugin install github:dhkimxx/omp-mistral-usage#vX.Y.Z --force
+   ```
+
+3. Check the version, then restart any running omp session so it loads the new code:
+
+   ```sh
+   omp plugin list
+   ```
+
+Read [CHANGELOG.md](CHANGELOG.md) first if you want to know what changed.
+
+Do not rely on `omp plugin upgrade` or an untagged `github:` install. On omp 19.0.0 both kept installing the first commit even after newer ones were pushed, while a tag (or a fresh Bun cache) resolved the newest.
+
+## Uninstall
+
+```sh
+omp plugin uninstall omp-mistral-usage
+```
 
 ## What it reports
 

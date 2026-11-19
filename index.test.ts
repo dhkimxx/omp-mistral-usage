@@ -164,10 +164,10 @@ test("the API budget follows the subscription's pay-as-you-go flag, not its own 
 const NOW = Date.parse("2026-11-20T00:00:00Z");
 
 // The OpenAPI spec lists FREE, INDIVIDUAL, EDU and TEAM and requires both budgets, whose
-// initial_budget is 0 when a plan has no allowance of that kind. Only EDU was checked live.
+// initial_budget is 0 when a plan has no allowance of that kind. EDU and INDIVIDUAL were checked live.
 const planCases = [
   { plan: "EDU", budgets: { vibe_budget: detail(22.9, 150), api_budget: detail(0, 15) }, expected: "Mistral Education · Vibe 23% · API 0% · resets 11d" },
-  { plan: "INDIVIDUAL", budgets: { vibe_budget: detail(40, 100, "EUR"), api_budget: detail(0, 0, "EUR") }, expected: "Mistral Pro · Vibe 40% · resets 11d" },
+  { plan: "INDIVIDUAL", budgets: { vibe_budget: detail(0.0319, 300), api_budget: detail(0, 30) }, expected: "Mistral Pro · Vibe 0% · API 0% · resets 11d" },
   { plan: "TEAM", budgets: { vibe_budget: detail(0, 0), api_budget: detail(55.5, 300) }, expected: "Mistral Team · API 56% · resets 11d" },
   { plan: "FREE", budgets: { vibe_budget: detail(0, 0), api_budget: detail(0, 0) }, expected: undefined },
   { plan: "SOMETHING_NEW", budgets: { vibe_budget: detail(10, 100), api_budget: detail(0, 0) }, expected: "Mistral SOMETHING_NEW · Vibe 10% · resets 11d" },

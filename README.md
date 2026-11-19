@@ -31,6 +31,7 @@ After installing or updating, restart any running omp session so it loads the ne
 
 - Tested from three states: not installed, an older version (`0.1.0`), and already on the latest.
 - `omp plugin upgrade omp-mistral-usage` is not a substitute: with `0.1.0` installed it answered "up to date (0.1.0)" while a newer revision existed.
+- Right after a new commit is pushed, the command can still install the previous one for a short while. In a test it caught up within a minute, and on an earlier occasion it took longer. If `omp plugin list` shows the old version, run the command again a little later.
 - To pin a release instead, append its tag, for example `#v0.2.0` (see the [tags](https://github.com/dhkimxx/omp-mistral-usage/tags)).
 - Over a non-interactive `ssh host '...'`, `omp` may not be on `PATH`. Call it by path, for example `~/.local/bin/omp`.
 

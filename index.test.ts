@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { UsageFetchContext, UsageFetchParams } from "@oh-my-pi/pi-ai";
 import { ProviderHttpError } from "@oh-my-pi/pi-ai/error";
-import { usageProvider } from "./index.js";
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import mistralUsage, { statusText, usageProvider } from "./index.js";
 
 const detail = (usage_percentage: number, initial_budget = 100, currency: unknown = "USD", payg_enabled: unknown = false) => ({
   usage_percentage, initial_budget, currency, reset_at: "2026-12-01T00:00:00Z", payg_enabled,
@@ -150,4 +151,177 @@ test("credentials never leave canonical origin and unsupported credentials are i
   assert.ok(await h.fetch());
   h.params.credential = { type: "oauth", accessToken: "test" };
   assert.equal(await h.fetch(), null);
+});
+
+test("the API budget follows the subscription's pay-as-you-go flag, not its own default false", async () => {
+  const budget = { vibe_budget: detail(125, 100, "USD", false), api_budget: detail(125, 100, "USD", false) };
+  const report = await harness(budget, { payg_enabled: true, vibe_payg_enabled: false }).fetch();
+  assert.equal(report?.limits[0].status, "exhausted");
+  assert.equal(report?.limits[1].status, "warning");
+  assert.ok(report?.limits[1].notes?.includes("Pay-as-you-go overage: enabled"));
+});
+
+const NOW = Date.parse("2026-11-20T00:00:00Z");
+
+// The OpenAPI spec lists FREE, INDIVIDUAL, EDU and TEAM and requires both budgets, whose
+// initial_budget is 0 when a plan has no allowance of that kind. Only EDU was checked live.
+const planCases = [
+  { plan: "EDU", budgets: { vibe_budget: detail(22.9, 150), api_budget: detail(0, 15) }, expected: "Mistral Education · Vibe 23% · API 0% · resets 11d" },
+  { plan: "INDIVIDUAL", budgets: { vibe_budget: detail(40, 100, "EUR"), api_budget: detail(0, 0, "EUR") }, expected: "Mistral Pro · Vibe 40% · resets 11d" },
+  { plan: "TEAM", budgets: { vibe_budget: detail(0, 0), api_budget: detail(55.5, 300) }, expected: "Mistral Team · API 56% · resets 11d" },
+  { plan: "FREE", budgets: { vibe_budget: detail(0, 0), api_budget: detail(0, 0) }, expected: undefined },
+  { plan: "SOMETHING_NEW", budgets: { vibe_budget: detail(10, 100), api_budget: detail(0, 0) }, expected: "Mistral SOMETHING_NEW · Vibe 10% · resets 11d" },
+];
+for (const { plan, budgets, expected } of planCases) {
+  test(`${plan} plan: status text shows only budgets with an allowance`, async () => {
+    const report = await harness(budgets, { plan_name: plan }).fetch();
+    assert.ok(report || expected === undefined);
+    assert.equal(report && statusText(report, NOW), expected);
+  });
+}
+
+test("a plan whose budgets are all zero still reports a plan but no usage figure", async () => {
+  const report = await harness({ vibe_budget: detail(0, 0), api_budget: detail(0, 0) }, { plan_name: "FREE" }).fetch();
+  assert.equal(report?.metadata?.planType, "FREE");
+  assert.deepEqual(report?.limits.map(limit => limit.status), ["unknown", "unknown"]);
+});
+
+test("status text counts over-budget use, omits the reset once it has passed, and formats short resets", async () => {
+  const report = await harness({ vibe_budget: { ...detail(125, 100), reset_at: "2026-11-20T02:30:00Z" } }, { plan_name: "EDU", vibe_payg_enabled: true }).fetch();
+  assert.equal(statusText(report!, NOW), "Mistral Education · Vibe 125% · resets 2h30m");
+  assert.equal(statusText(report!, Date.parse("2026-11-18T20:30:00Z")), "Mistral Education · Vibe 125% · resets 1d6h");
+  assert.equal(statusText(report!, Date.parse("2026-11-20T02:00:00Z")), "Mistral Education · Vibe 125% · resets 30m");
+  assert.equal(statusText(report!, Date.parse("2026-11-21T00:00:00Z")), "Mistral Education · Vibe 125%");
+  const noPlan = await harness({ vibe_budget: detail(5) }).fetch();
+  assert.equal(statusText(noPlan!, Date.parse("2026-12-01T00:00:00Z")), "Mistral · Vibe 5%");
+});
+
+interface Wiring {
+  statuses: (string | undefined)[];
+  requests: { url: string; authorization: string | undefined }[];
+  keyLookups: number;
+  emit(event: string): void;
+  setProvider(provider: string): void;
+  last(): string | undefined;
+  /** Resolves once setStatus has been called `total` times, the signal that a refresh has finished. */
+  settled(total: number): Promise<void>;
+}
+
+async function wired(
+  options: { hasUI?: boolean; apiKey?: string | undefined; baseUrl?: string; status?: number },
+  run: (wiring: Wiring) => Promise<void>,
+): Promise<void> {
+  const handlers = new Map<string, (event: unknown, ctx: unknown) => void>();
+  const pi = { registerProvider() {}, on(event: string, handler: (event: unknown, ctx: unknown) => void) { handlers.set(event, handler); } } as unknown as ExtensionAPI;
+  const statuses: (string | undefined)[] = [];
+  const requests: { url: string; authorization: string | undefined }[] = [];
+  let waiting: { total: number; resolve: () => void } | undefined;
+  let provider = "mistral";
+  let keyLookups = 0;
+  const ctx = {
+    hasUI: options.hasUI ?? true,
+    ui: {
+      setStatus: (_key: string, text: string | undefined) => {
+        statuses.push(text);
+        if (waiting && statuses.length >= waiting.total) waiting.resolve();
+      },
+    },
+    get model() { return { provider, baseUrl: options.baseUrl ?? "https://api.mistral.ai/v1" }; },
+    modelRegistry: { getApiKeyForProvider: async () => { keyLookups++; return "apiKey" in options ? options.apiKey : "test-key"; } },
+  };
+  const future = new Date(Date.now() + 3 * 86_400_000 + 3_600_000).toISOString();
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    const url = String(input);
+    requests.push({ url, authorization: (init?.headers as Record<string, string> | undefined)?.Authorization });
+    const body = url.endsWith("/budget")
+      ? { vibe_budget: { ...detail(22.9, 150), reset_at: future }, api_budget: { ...detail(0, 15), reset_at: future } }
+      : { plan_name: "EDU", payg_enabled: false, vibe_payg_enabled: false, enterprise: false };
+    return new Response(JSON.stringify(body), { status: options.status ?? 200 });
+  }) as typeof fetch;
+  const previousPools = process.env.MISTRAL_USAGE_POOLS;
+  delete process.env.MISTRAL_USAGE_POOLS;
+  mistralUsage(pi);
+  try {
+    await run({
+      statuses, requests,
+      get keyLookups() { return keyLookups; },
+      emit: event => handlers.get(event)?.({}, ctx),
+      setProvider: next => { provider = next; },
+      last: () => statuses.at(-1),
+      settled: total => {
+        if (statuses.length >= total) return Promise.resolve();
+        const { promise, resolve } = Promise.withResolvers<void>();
+        waiting = { total, resolve };
+        return promise;
+      },
+    });
+  } finally {
+    handlers.get("session_shutdown")?.({}, ctx);
+    globalThis.fetch = original;
+    if (previousPools !== undefined) process.env.MISTRAL_USAGE_POOLS = previousPools;
+  }
+}
+
+const STATUS_PATTERN = /^Mistral Education · Vibe 23% · API 0% · resets 3d\dh$/;
+
+test("a status entry shows plan and budgets for an active Mistral model and refetches at most every five minutes", async () => {
+  await wired({}, async w => {
+    w.emit("session_start");
+    await w.settled(2);
+    assert.match(w.last() ?? "", STATUS_PATTERN);
+    for (const event of ["agent_start", "turn_end", "turn_end", "agent_end"]) w.emit(event);
+    assert.deepEqual(w.requests.map(request => request.url), ["https://api.mistral.ai/v1/billing/budget", "https://api.mistral.ai/v1/billing/subscription"]);
+    assert.equal(w.requests[0].authorization, "Bearer test-key");
+    assert.equal(w.keyLookups, 1);
+    w.emit("session_shutdown");
+    assert.equal(w.last(), undefined);
+  });
+});
+
+test("the entry disappears for other providers and returns from cache without another request", async () => {
+  await wired({}, async w => {
+    w.emit("session_start");
+    await w.settled(2);
+    w.setProvider("anthropic");
+    w.emit("agent_start");
+    assert.equal(w.last(), undefined);
+    w.setProvider("mistral");
+    w.emit("agent_start");
+    assert.match(w.last() ?? "", STATUS_PATTERN);
+    assert.equal(w.requests.length, 2);
+    assert.equal(w.keyLookups, 1);
+  });
+});
+
+test("nothing is requested without a UI or for another provider", async () => {
+  await wired({ hasUI: false }, async w => {
+    w.emit("session_start");
+    assert.deepEqual([w.statuses.length, w.keyLookups, w.requests.length], [0, 0, 0]);
+  });
+  await wired({}, async w => {
+    w.setProvider("anthropic");
+    w.emit("session_start");
+    assert.deepEqual([w.statuses, w.keyLookups, w.requests.length], [[undefined], 0, 0]);
+  });
+});
+
+test("no key or a custom base URL sends nothing and shows no entry", async () => {
+  for (const options of [{ apiKey: undefined }, { baseUrl: "https://proxy.example/v1" }] as const) {
+    await wired(options, async w => {
+      w.emit("session_start");
+      await w.settled(2);
+      assert.equal(w.requests.length, 0);
+      assert.ok(w.statuses.every(text => text === undefined));
+    });
+  }
+});
+
+test("a rejected key hides the entry instead of showing stale numbers", async () => {
+  await wired({ status: 401 }, async w => {
+    w.emit("session_start");
+    await w.settled(2);
+    assert.ok(w.statuses.every(text => text === undefined));
+    assert.equal(w.requests.length, 1);
+  });
 });

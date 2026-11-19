@@ -1,6 +1,7 @@
 import type { UsageFetchContext, UsageFetchParams, UsageLimit, UsageProvider, UsageReport } from "@oh-my-pi/pi-ai";
 import { ProviderHttpError } from "@oh-my-pi/pi-ai/error";
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { clearInterval, setInterval } from "node:timers";
+import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 
 const ORIGIN = "https://api.mistral.ai";
 const PROVIDER = "mistral";
@@ -73,11 +74,14 @@ function resetTimestamp(value: unknown): number | undefined {
   return Number.isFinite(time) && time > 0 ? time : undefined;
 }
 
-/** Pay-as-you-go flag of one budget: its own field when present, else the subscription's. */
+/**
+ * Pay-as-you-go flag of one budget. The API documents the budget's own `payg_enabled` as meaningful
+ * only for Vibe (it defaults to false for the API budget), so the API budget follows the subscription.
+ */
 function payAsYouGo(name: Pool, data: RecordValue, subscription: RecordValue | null): boolean | undefined {
-  if (typeof data.payg_enabled === "boolean") return data.payg_enabled;
-  const fallback = name === "vibe" ? subscription?.vibe_payg_enabled : subscription?.payg_enabled;
-  return typeof fallback === "boolean" ? fallback : undefined;
+  if (name === "vibe" && typeof data.payg_enabled === "boolean") return data.payg_enabled;
+  const flag = name === "vibe" ? subscription?.vibe_payg_enabled : subscription?.payg_enabled;
+  return typeof flag === "boolean" ? flag : undefined;
 }
 
 function pool(name: Pool, value: unknown, accountId: string | undefined, subscription: RecordValue | null): UsageLimit | null {
@@ -139,11 +143,109 @@ async function fetchUsage(params: UsageFetchParams, ctx: UsageFetchContext): Pro
 
 export const usageProvider: UsageProvider = {
   id: PROVIDER,
-  cacheVersion: 2026111801,
+  cacheVersion: 2026111901,
   supports: params => params.provider === PROVIDER && params.credential.type === "api_key" && !!params.credential.apiKey?.trim(),
   fetchUsage,
 };
 
+/** Plan names the billing API documents, in the words Mistral's pricing page uses. */
+const PLAN_NAMES: Record<string, string> = { FREE: "Free", INDIVIDUAL: "Pro", EDU: "Education", TEAM: "Team" };
+const POOL_LABELS: Record<Pool, string> = { vibe: "Vibe", api: "API" };
+
+/** `11d`, `2d5h`, `2h30m`, `40m`: two units at most, like omp's own reset countdowns. */
+function compactDuration(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const rest = minutes % 60;
+  if (days) return hours ? `${days}d${hours}h` : `${days}d`;
+  if (hours) return rest ? `${hours}h${rest}m` : `${hours}h`;
+  return `${rest}m`;
+}
+
+/**
+ * One status-bar line: the plan, every budget that has an allowance, and the nearest reset.
+ * Zero-allowance budgets (a plan without that kind of usage) are left out rather than shown as 0%.
+ */
+export function statusText(report: UsageReport, now: number): string | undefined {
+  const parts: string[] = [];
+  let reset: number | undefined;
+  for (const name of POOLS) {
+    const limit = report.limits.find(candidate => candidate.id === `mistral:${name}:monthly`);
+    const fraction = limit?.amount.usedFraction;
+    if (!limit || limit.amount.unit === "unknown" || fraction === undefined) continue;
+    parts.push(`${POOL_LABELS[name]} ${Math.round(fraction * 100)}%`);
+    const at = limit.window?.resetsAt;
+    if (at !== undefined && at > now && (reset === undefined || at < reset)) reset = at;
+  }
+  if (!parts.length) return undefined;
+  const plan = report.metadata?.planType;
+  const head = typeof plan === "string" && plan ? `Mistral ${PLAN_NAMES[plan.toUpperCase()] ?? plan}` : "Mistral";
+  return [head, ...parts, ...(reset === undefined ? [] : [`resets ${compactDuration(reset - now)}`])].join(" · ");
+}
+
+const STATUS_KEY = "mistral-usage";
+const REFRESH_MS = 5 * 60_000;
+const FAILURE_RETRY_MS = 60_000;
+const REQUEST_TIMEOUT_MS = 10_000;
+const TICK_MS = 60_000;
+
 export default function mistralUsage(pi: ExtensionAPI): void {
   pi.registerProvider(PROVIDER, { usage: usageProvider });
+
+  // omp's own `usage` status-line segment drops monthly windows from providers it does not know,
+  // so Mistral gets a status entry of its own. Hook statuses render without any configuration.
+  let latest: ExtensionContext | undefined;
+  let text: string | undefined;
+  let nextFetchAt = 0;
+  let inFlight = false;
+  let timer: NodeJS.Timeout | undefined;
+
+  const publish = (ctx: ExtensionContext): void => {
+    ctx.ui.setStatus(STATUS_KEY, ctx.model?.provider === PROVIDER ? text : undefined);
+  };
+
+  async function refresh(ctx: ExtensionContext): Promise<void> {
+    if (!ctx.hasUI) return;
+    latest = ctx;
+    if (!timer) {
+      timer = setInterval(() => { if (latest) void refresh(latest); }, TICK_MS);
+      timer.unref();
+    }
+    publish(ctx);
+    const model = ctx.model;
+    if (model?.provider !== PROVIDER || inFlight || Date.now() < nextFetchAt) return;
+    inFlight = true;
+    try {
+      const apiKey = (await ctx.modelRegistry.getApiKeyForProvider(PROVIDER))?.trim();
+      const report = apiKey
+        ? await usageProvider.fetchUsage(
+            { provider: PROVIDER, credential: { type: "api_key", apiKey }, baseUrl: model.baseUrl, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) },
+            { fetch: globalThis.fetch.bind(globalThis) },
+          )
+        : null;
+      text = report ? statusText(report, Date.now()) : undefined;
+    } catch {
+      text = undefined;
+    } finally {
+      inFlight = false;
+      nextFetchAt = Date.now() + (text ? REFRESH_MS : FAILURE_RETRY_MS);
+    }
+    publish(ctx);
+  }
+
+  const onActivity = (_event: unknown, ctx: ExtensionContext): void => { void refresh(ctx); };
+  pi.on("session_start", onActivity);
+  pi.on("session_switch", onActivity);
+  pi.on("agent_start", onActivity);
+  pi.on("turn_end", onActivity);
+  pi.on("agent_end", onActivity);
+  pi.on("session_shutdown", (_event, ctx) => {
+    clearInterval(timer);
+    timer = undefined;
+    latest = undefined;
+    text = undefined;
+    nextFetchAt = 0;
+    if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, undefined);
+  });
 }

@@ -1,6 +1,6 @@
 # omp-mistral-usage
 
-Mistral usage for [omp](https://github.com/can1357/oh-my-pi): your monthly **Vibe Code** and **API** budgets in `omp usage` and `/usage`, with the plan, reset time and pay-as-you-go state.
+Mistral usage for [omp](https://github.com/can1357/oh-my-pi): your monthly **Vibe Code** and **API** budgets in `omp usage` and `/usage`, plus a one-line entry in the status bar while a Mistral model is active. It shows the plan, reset time and pay-as-you-go state and does not depend on a particular plan, but only the Education plan has been verified live (see [Compatibility](#compatibility)).
 
 ```
 Mistral — 1 account
@@ -9,6 +9,12 @@ Mistral — 1 account
         Monthly budget: 150 USD · Pay-as-you-go overage: disabled
       ● API monthly budget   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░  $0.00 / $15.00 · 0.0% used · resets in 12d19h
         Monthly budget: 15 USD · Pay-as-you-go overage: disabled
+```
+
+Status bar, with a Mistral model selected and no configuration:
+
+```
+Mistral Education · Vibe 23% · API 0% · resets 11d17h
 ```
 
 ## Install
@@ -32,8 +38,18 @@ Update with `omp plugin upgrade omp-mistral-usage`, remove with `omp plugin unin
 
 - USD budgets show dollars. Any other currency shows a percentage with the currency named in a note.
 - Status is `ok` below 80%, `warning` from 80%, and `exhausted` at or past the budget. With pay-as-you-go enabled, usage past the allowance stays `warning` because it is billed rather than stopped.
-- A budget of zero is shown as unknown, not as 0% used.
-- The plan name (for example `EDU`) appears next to the account. Text from the API is stripped of control characters and capped before it reaches the terminal.
+- A budget of zero means the plan has no allowance of that kind. It is shown as unknown in `omp usage`, not as 0% used, and left out of the status bar.
+- The plan name appears next to the account as the API reports it (`FREE`, `INDIVIDUAL`, `EDU`, `TEAM`). The status bar uses the names from Mistral's pricing page: Free, Pro, Education, Team. Text from the API is stripped of control characters and capped before it reaches the terminal.
+- Pay-as-you-go comes from the budget itself for Vibe and from the subscription for the API budget, because the API documents the budget's own flag as meaningful only for Vibe.
+
+## Status bar
+
+omp's built-in `usage` status-line segment only understands 5-hour, daily and weekly windows, plus monthly windows from a hard-coded list of providers (Cursor, OpenCode Go, Alibaba Token Plan). Mistral's monthly budgets are not on that list, so the segment stays empty. This plugin sets its own status entry instead, which omp renders without any setting (`statusLine.showHookStatus` is on by default).
+
+- It appears only while the active model's provider is `mistral`, and only in the interactive UI. Without a UI (print mode, RPC) it makes no request.
+- It refreshes on session start, each turn and agent run, and once a minute for model switches, but asks the billing API at most every five minutes, and every minute while it is failing. `omp usage` has its own cache and request.
+- It is hidden when there is no key, the key is rejected, the API is unreachable, the model uses a custom base URL, or the plan has no allowance.
+- With a custom status line that lists the `status` segment, omp renders extension status entries there instead of below the bar.
 
 ## How it works
 
@@ -61,7 +77,7 @@ Mistral usage is not built into omp yet. Pull requests that add it ([#19552](htt
 
 ## Compatibility
 
-Tested with omp 18.22.0 against a live Mistral Vibe sign-in key on an EDU plan. The plugin uses `registerProvider` with a `usage` provider and `ProviderHttpError` from `@oh-my-pi/pi-ai/error`, both part of the extension API surface omp exposes.
+Tested with omp 19.0.0 and 18.22.0 types. Verified live against a Mistral Vibe sign-in key on an **EDU** plan only. The Free, Pro (`INDIVIDUAL`), Team and Enterprise handling follows Mistral's [OpenAPI spec](https://docs.mistral.ai/openapi.yaml) and is covered by tests that use spec-shaped payloads, not by a live account of those plans. If your plan reports something unexpected, open an issue with the output of `omp usage --provider mistral --json`, with account identifiers removed.
 
 ## Development
 

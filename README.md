@@ -27,29 +27,20 @@ omp plugin install github:dhkimxx/omp-mistral-usage#v0.2.0
 
 Install a release tag, as above, rather than the bare `github:` spec.
 
-## Update
+## Install or update to the latest
 
-1. Find the newest version on the [tags page](https://github.com/dhkimxx/omp-mistral-usage/tags), or list it from a shell:
+One command does both. It looks up the newest release tag and installs it over whatever is there, so it also works on a machine that does not have the plugin yet:
 
-   ```sh
-   git ls-remote --tags --refs https://github.com/dhkimxx/omp-mistral-usage.git
-   ```
+```sh
+omp plugin install "github:dhkimxx/omp-mistral-usage#$(git ls-remote --tags --refs https://github.com/dhkimxx/omp-mistral-usage.git | sed 's|.*refs/tags/||' | sort -V | tail -1)" --force
+```
 
-2. Install that tag over the current one. `--force` replaces the installed copy. The plugin stores no credentials, so your Mistral login is untouched:
+It needs `git`. Restart any running omp session afterwards so it loads the new code, and check the version with `omp plugin list`. The plugin stores no credentials, so your Mistral login is untouched. See [CHANGELOG.md](CHANGELOG.md) for what changed.
 
-   ```sh
-   omp plugin install github:dhkimxx/omp-mistral-usage#vX.Y.Z --force
-   ```
-
-3. Check the version, then restart any running omp session so it loads the new code:
-
-   ```sh
-   omp plugin list
-   ```
-
-Read [CHANGELOG.md](CHANGELOG.md) first if you want to know what changed.
-
-Do not rely on `omp plugin upgrade` or an untagged `github:` install. On omp 19.0.0 both kept installing the first commit even after newer ones were pushed, while a tag (or a fresh Bun cache) resolved the newest.
+- Tested from three states: not installed, an older version (`0.1.0`), and already on the latest.
+- Over a non-interactive `ssh host '...'`, `omp` may not be on `PATH`. Call it by path, for example `~/.local/bin/omp`.
+- To pin a version instead, replace the `$(...)` part with the tag, for example `#v0.2.0`.
+- Do not rely on `omp plugin upgrade` or an untagged `github:` install. On omp 19.0.0 both kept installing the first commit even after newer ones were pushed, while a tag (or a fresh Bun cache) resolved the newest.
 
 ## Uninstall
 

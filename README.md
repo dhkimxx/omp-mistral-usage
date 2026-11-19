@@ -17,30 +17,22 @@ Status bar, with a Mistral model selected and no configuration:
 Mistral Education · Vibe 23% · API 0% · resets 11d17h
 ```
 
-## Install
+## Install or update
 
 ```sh
-omp plugin install github:dhkimxx/omp-mistral-usage#v0.2.0
+omp plugin install github:dhkimxx/omp-mistral-usage --force
 ```
 
-`omp login mistral` opens a browser sign-in with your Mistral account, so there is no API key to create or paste. The plugin reads whichever key omp already holds, including a `MISTRAL_API_KEY` console key, and stores nothing itself. Only the sign-in key has been tested against the live API.
+This one command installs the plugin on a machine that does not have it and brings an existing install up to the newest `main`. It has no pipes or command substitution, so it does not depend on which shell you use or on `sed`, `sort` or `git`. The only requirement is `omp`.
 
-Install a release tag, as above, rather than the bare `github:` spec.
+`omp login mistral` opens a browser sign-in with your Mistral account, so there is no API key to create or paste. The plugin reads whichever key omp already holds, including a `MISTRAL_API_KEY` console key, and stores nothing itself, so updating never touches your login. Only the sign-in key has been tested against the live API.
 
-## Install or update to the latest
-
-One command does both. It looks up the newest release tag and installs it over whatever is there, so it also works on a machine that does not have the plugin yet:
-
-```sh
-omp plugin install "github:dhkimxx/omp-mistral-usage#$(git ls-remote --tags --refs https://github.com/dhkimxx/omp-mistral-usage.git | sed 's|.*refs/tags/||' | sort -V | tail -1)" --force
-```
-
-It needs `git`. Restart any running omp session afterwards so it loads the new code, and check the version with `omp plugin list`. The plugin stores no credentials, so your Mistral login is untouched. See [CHANGELOG.md](CHANGELOG.md) for what changed.
+After installing or updating, restart any running omp session so it loads the new code, and check the version with `omp plugin list`. See [CHANGELOG.md](CHANGELOG.md) for what changed.
 
 - Tested from three states: not installed, an older version (`0.1.0`), and already on the latest.
+- `omp plugin upgrade omp-mistral-usage` is not a substitute: with `0.1.0` installed it answered "up to date (0.1.0)" while a newer revision existed.
+- To pin a release instead, append its tag, for example `#v0.2.0` (see the [tags](https://github.com/dhkimxx/omp-mistral-usage/tags)).
 - Over a non-interactive `ssh host '...'`, `omp` may not be on `PATH`. Call it by path, for example `~/.local/bin/omp`.
-- To pin a version instead, replace the `$(...)` part with the tag, for example `#v0.2.0`.
-- Do not rely on `omp plugin upgrade` or an untagged `github:` install. On omp 19.0.0 both kept installing the first commit even after newer ones were pushed, while a tag (or a fresh Bun cache) resolved the newest.
 
 ## Uninstall
 

@@ -20,14 +20,14 @@ Mistral Education · Vibe 23% · API 0% · resets 11d17h
 ## Install
 
 ```sh
-omp plugin install github:dhkimxx/omp-mistral-usage
+omp plugin install github:dhkimxx/omp-mistral-usage#v0.2.0
 omp login mistral
 omp usage --provider mistral
 ```
 
 `omp login mistral` opens a browser sign-in with your Mistral account, so there is no API key to create or paste. The plugin reads whichever key omp already holds, including a `MISTRAL_API_KEY` console key, and stores nothing itself. Only the sign-in key has been tested against the live API.
 
-Update with `omp plugin upgrade omp-mistral-usage`, remove with `omp plugin uninstall omp-mistral-usage`.
+Pin a release tag as above. To update, install the newer tag with `--force`. On omp 19.0.0, `omp plugin upgrade` and an untagged `github:` install kept installing the first commit even after newer ones were pushed, while a tag (or a fresh Bun cache) resolved the newest. Remove with `omp plugin uninstall omp-mistral-usage`.
 
 ## What it reports
 
